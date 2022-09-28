@@ -68,7 +68,7 @@ def explain_weights_xgboost(xgb,
         - 'cover' - the average coverage of the feature when it is used in trees
     """
     booster, is_regression = _check_booster_args(xgb)
-    xgb_feature_names = booster.feature_names
+    xgb_feature_names = _get_booster_feature_names(booster)
     coef = _xgb_feature_importances(booster, importance_type=importance_type)
     return get_feature_importance_explanation(
         xgb, vec, coef,
@@ -82,6 +82,12 @@ def explain_weights_xgboost(xgb,
         num_features=coef.shape[-1],
     )
 
+def _get_booster_feature_names(booster):
+    # xgboost >= 1.4.0 return None when feature names are missing
+    # while previous versions returns list f0, f1, f2, ...
+    if booster.feature_names is not None:
+        return booster.feature_names
+    return ["f{}".format(i) for i in range(booster.num_features())]
 
 @explain_prediction.register(XGBClassifier)
 @explain_prediction.register(XGBRegressor)
@@ -146,7 +152,7 @@ def explain_prediction_xgboost(
     Weights of all features sum to the output score of the estimator.
     """
     booster, is_regression = _check_booster_args(xgb, is_regression)
-    xgb_feature_names = booster.feature_names
+    xgb_feature_names = _get_booster_feature_names(booster)
     vec, feature_names = handle_vec(
         xgb, doc, vec, vectorized, feature_names,
         num_features=len(xgb_feature_names))
@@ -328,7 +334,7 @@ def _xgb_n_targets(xgb):
 def _xgb_feature_importances(booster, importance_type):
     fs = booster.get_score(importance_type=importance_type)
     all_features = np.array(
-        [fs.get(f, 0.) for f in booster.feature_names], dtype=np.float32)
+        [fs.get(f, 0.) for f in _get_booster_feature_names(booster)], dtype=np.float32)
     return all_features / all_features.sum()
 
 
@@ -359,9 +365,9 @@ def _parse_tree_dump(text_dump):
 def _parse_dump_line(line):
     # type: (str) -> Tuple[int, Dict[str, Any]]
     branch_match = re.match(
-        r'^(\t*)(\d+):\[([^<]+)<([^\]]+)\] '
-        r'yes=(\d+),no=(\d+),missing=(\d+),'
-        r'gain=([^,]+),cover=(.+)$', line)
+        '^(\t*)(\d+):\[([^<]+)<([^\]]+)\] '
+        'yes=(\d+),no=(\d+),missing=(\d+),'
+        'gain=([^,]+),cover=(.+)$', line)
     if branch_match:
         tabs, node_id, feature, condition, yes, no, missing, gain, cover = \
             branch_match.groups()
@@ -377,7 +383,7 @@ def _parse_dump_line(line):
             'gain': float(gain),
             'cover': float(cover),
         }
-    leaf_match = re.match(r'^(\t*)(\d+):leaf=([^,]+),cover=(.+)$', line)
+    leaf_match = re.match('^(\t*)(\d+):leaf=([^,]+),cover=(.+)$', line)
     if leaf_match:
         tabs, node_id, value, cover = leaf_match.groups()
         depth = len(tabs)
